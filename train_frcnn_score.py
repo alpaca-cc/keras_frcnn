@@ -33,7 +33,7 @@ def train_score():
 
     # TODO: the only file should to be change for other data to train
     cfg.model_path = './model/score_frcnn_last.hdf5'
-    cfg.simple_label_file = '../dataset/label/training/medium_page/labels_medium_page_traning.txt'
+    cfg.simple_label_file = '../dataset/label/training/medium_bar/labels_medium_bar_training.txt'
 
     all_images, classes_count, class_mapping = get_data(cfg.simple_label_file)
 

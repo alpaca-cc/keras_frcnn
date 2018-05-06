@@ -13,10 +13,10 @@ class Config:
         self.rot_90 = False
 
         # anchor box scales
-        self.anchor_box_scales = [128, 256, 512]
+        self.anchor_box_scales = [128, 256, 512, 1024, 2048]
 
         # anchor box ratios
-        self.anchor_box_ratios = [[1, 1], [1, 2], [2, 1]]
+        self.anchor_box_ratios = [[1, 5], [5, 1], [2, 5], [5, 2], [1, 1], [2, 3], [3, 2], [1, 2], [2, 1]]
 
         # size to resize the smallest side of the image
         self.im_size = 600
@@ -57,7 +57,7 @@ class Config:
 
         # params add by me
         self.data_dir = '.data/'
-        self.num_epochs = 3000
+        self.num_epochs = 50
 
         self.kitti_simple_label_file = 'kitti_simple_label.txt'
 

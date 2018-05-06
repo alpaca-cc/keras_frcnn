@@ -70,6 +70,7 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
         exit(0)
 
     X, ratio = format_img(img, cfg)
+    # print(ratio)
     if K.image_dim_ordering() == 'tf':
         X = np.transpose(X, (0, 2, 3, 1))
     # get the feature maps and output from the RPN
@@ -81,12 +82,15 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
     # convert from (x1,y1,x2,y2) to (x,y,w,h)
     result[:, 2] -= result[:, 0]
     result[:, 3] -= result[:, 1]
-    bbox_threshold = 0.8
+    # print(result)
+    bbox_threshold = 0.3
 
     # apply the spatial pyramid pooling to the proposed regions
     boxes = dict()
     for jk in range(result.shape[0] // cfg.num_rois + 1):
+        # print(jk)
         rois = np.expand_dims(result[cfg.num_rois * jk:cfg.num_rois * (jk + 1), :], axis=0)
+        # print(rois)
         if rois.shape[1] == 0:
             break
         if jk == result.shape[0] // cfg.num_rois:
@@ -97,11 +101,17 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
             rois_padded[:, :curr_shape[1], :] = rois
             rois_padded[0, curr_shape[1]:, :] = rois[0, 0, :]
             rois = rois_padded
+            # print (rois)
 
         [p_cls, p_regr] = model_classifier_only.predict([F, rois])
 
         for ii in range(p_cls.shape[1]):
             if np.max(p_cls[0, ii, :]) < bbox_threshold or np.argmax(p_cls[0, ii, :]) == (p_cls.shape[2] - 1):
+                # print(np.max(p_cls[0, ii, :]))
+                # print((p_cls.shape[2] - 1))
+                continue
+
+            if np.max(p_cls[0, ii, :]) > 0.986:
                 continue
 
             cls_num = np.argmax(p_cls[0, ii, :])
@@ -121,6 +131,7 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
             boxes[cls_num].append(
                 [cfg.rpn_stride * x, cfg.rpn_stride * y, cfg.rpn_stride * (x + w), cfg.rpn_stride * (y + h),
                  np.max(p_cls[0, ii, :])])
+    print(boxes)
     # add some nms to reduce many boxes
     for cls_num, box in boxes.items():
         boxes_nms = roi_helpers.non_max_suppression_fast(box, overlap_thresh=0.5)
@@ -129,13 +140,15 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
         for b in boxes_nms:
             b[0], b[1], b[2], b[3] = get_real_coordinates(ratio, b[0], b[1], b[2], b[3])
             print('{} prob: {}'.format(b[0: 4], b[-1]))
+    print(class_mapping)
     img = draw_boxes_and_label_on_image_cv2(img, class_mapping, boxes)
     print('Elapsed time = {}'.format(time.time() - st))
     cv2.imshow('image', img)
     result_path = './results_images/{}.png'.format(os.path.basename(img_path).split('.')[0])
     print('result saved into ', result_path)
     cv2.imwrite(result_path, img)
-    cv2.waitKey(0)
+    cv2.waitKey(30)
+
 
 
 def predict(args_):
@@ -191,10 +204,11 @@ def predict(args_):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', '-p', default='images/000010.png', help='image path')
+    parser.add_argument('--path', '-p', default='images/', help='image path')
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = parse_args()
+    # print(args)
     predict(args)
