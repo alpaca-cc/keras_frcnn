@@ -15,6 +15,13 @@ import keras_frcnn.resnet as nn
 from keras_frcnn.visualize import draw_boxes_and_label_on_image_cv2
 
 
+def preprocess_img(img):
+    img = cv2.bitwise_not(img)
+    img = cv2.copyMakeBorder(img, 150, 150, 50, 50, cv2.BORDER_CONSTANT)
+    img = cv2.resize(img, (200, 200))
+    return img
+
+
 def format_img_size(img, cfg):
     """ formats the image size based on config """
     img_min_side = float(cfg.im_size)
@@ -62,13 +69,15 @@ def get_real_coordinates(ratio, x1, y1, x2, y2):
     return real_x1, real_y1, real_x2, real_y2
 
 
-def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_mapping):
+def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_mapping, preprocess):
     st = time.time()
     img = cv2.imread(img_path)
     if img is None:
         print('reading image failed.')
         exit(0)
 
+    if preprocess:
+        img = preprocess_img(img)
     X, ratio = format_img(img, cfg)
     # print(ratio)
     if K.image_dim_ordering() == 'tf':
@@ -107,11 +116,6 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
 
         for ii in range(p_cls.shape[1]):
             if np.max(p_cls[0, ii, :]) < bbox_threshold or np.argmax(p_cls[0, ii, :]) == (p_cls.shape[2] - 1):
-                # print(np.max(p_cls[0, ii, :]))
-                # print((p_cls.shape[2] - 1))
-                continue
-
-            if np.max(p_cls[0, ii, :]) > 0.986:
                 continue
 
             cls_num = np.argmax(p_cls[0, ii, :])
@@ -132,23 +136,76 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
                 [cfg.rpn_stride * x, cfg.rpn_stride * y, cfg.rpn_stride * (x + w), cfg.rpn_stride * (y + h),
                  np.max(p_cls[0, ii, :])])
     print(boxes)
+    concat_boxes = []
     # add some nms to reduce many boxes
     for cls_num, box in boxes.items():
-        boxes_nms = roi_helpers.non_max_suppression_fast(box, overlap_thresh=0.5)
-        boxes[cls_num] = boxes_nms
-        print(class_mapping[cls_num] + ":")
+        boxes_nms = roi_helpers.non_max_suppression_fast(box, overlap_thresh=0.4)
+        # boxes[cls_num] = boxes_nums
+        # reformat boxes into one array of form [x1, y1, x2, y2, prob, cls_num] for cross class non max suppresion
         for b in boxes_nms:
-            b[0], b[1], b[2], b[3] = get_real_coordinates(ratio, b[0], b[1], b[2], b[3])
-            print('{} prob: {}'.format(b[0: 4], b[-1]))
+            b = np.append(b, cls_num)
+            concat_boxes.append(b)
+    # print (concat_boxes)
+    # cross class non max suppresion
+    boxes_nms_crs_cls = roi_helpers.non_max_suppression_fast(concat_boxes, overlap_thresh=0.5)
+    for b in boxes_nms_crs_cls:
+        cls_num = int(b[-1])
+        boxes[cls_num].append(b[0:5])
+        print(class_mapping[cls_num] + ":")
+        b[0], b[1], b[2], b[3] = get_real_coordinates(ratio, b[0], b[1], b[2], b[3])
+        print('{} prob: {}'.format(b[0: 4], b[4]))
     print(class_mapping)
     img = draw_boxes_and_label_on_image_cv2(img, class_mapping, boxes)
     print('Elapsed time = {}'.format(time.time() - st))
-    cv2.imshow('image', img)
+    # cv2.imshow('image', img)
     result_path = './results_images/{}.png'.format(os.path.basename(img_path).split('.')[0])
     print('result saved into ', result_path)
     cv2.imwrite(result_path, img)
     cv2.waitKey(30)
+    return boxes_nms_crs_cls, class_mapping
 
+
+def predict_from_server(path):
+    with open('config.pickle', 'rb') as f_in:
+        cfg = pickle.load(f_in)
+    cfg.use_horizontal_flips = False
+    cfg.use_vertical_flips = False
+    cfg.rot_90 = False
+
+    class_mapping = cfg.class_mapping
+    if 'bg' not in class_mapping:
+        class_mapping['bg'] = len(class_mapping)
+
+    class_mapping = {v: k for k, v in class_mapping.items()}
+    input_shape_img = (None, None, 3)
+    input_shape_features = (None, None, 1024)
+
+    img_input = Input(shape=input_shape_img)
+    roi_input = Input(shape=(cfg.num_rois, 4))
+    feature_map_input = Input(shape=input_shape_features)
+
+    shared_layers = nn.nn_base(img_input, trainable=True)
+
+    # define the RPN, built on the base layers
+    num_anchors = len(cfg.anchor_box_scales) * len(cfg.anchor_box_ratios)
+    rpn_layers = nn.rpn(shared_layers, num_anchors)
+    classifier = nn.classifier(feature_map_input, roi_input, cfg.num_rois, nb_classes=len(class_mapping),
+                               trainable=True)
+    model_rpn = Model(img_input, rpn_layers)
+    model_classifier_only = Model([feature_map_input, roi_input], classifier)
+
+    model_classifier = Model([feature_map_input, roi_input], classifier)
+
+    print('Loading weights from {}'.format(cfg.model_path))
+    model_rpn.load_weights(cfg.model_path, by_name=True)
+    model_classifier.load_weights(cfg.model_path, by_name=True)
+
+    model_rpn.compile(optimizer='sgd', loss='mse')
+    model_classifier.compile(optimizer='sgd', loss='mse')
+
+    print('predict image from {}'.format(path))
+    boxes, class_mapping= predict_single_image(path, model_rpn, model_classifier_only, cfg, class_mapping, True)
+    return boxes, class_mapping
 
 
 def predict(args_):
@@ -190,21 +247,26 @@ def predict(args_):
     model_rpn.compile(optimizer='sgd', loss='mse')
     model_classifier.compile(optimizer='sgd', loss='mse')
 
+    preprocess = False
+    if args_.ios == "True":
+        preprocess = True
+
     if os.path.isdir(path):
         for idx, img_name in enumerate(sorted(os.listdir(path))):
             if not img_name.lower().endswith(('.bmp', '.jpeg', '.jpg', '.png', '.tif', '.tiff')):
                 continue
             print(img_name)
             predict_single_image(os.path.join(path, img_name), model_rpn,
-                                 model_classifier_only, cfg, class_mapping)
+                                 model_classifier_only, cfg, class_mapping, preprocess)
     elif os.path.isfile(path):
         print('predict image from {}'.format(path))
-        predict_single_image(path, model_rpn, model_classifier_only, cfg, class_mapping)
+        predict_single_image(path, model_rpn, model_classifier_only, cfg, class_mapping, preprocess)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', '-p', default='images/', help='image path')
+    parser.add_argument('--path', '-p', default='./server_files/received.jpeg', help='image path')
+    parser.add_argument('--ios', '-i', default='False', help='whether data is from ios')
     return parser.parse_args()
 
 

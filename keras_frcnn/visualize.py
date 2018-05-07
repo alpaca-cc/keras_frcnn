@@ -84,12 +84,12 @@ def draw_boxes_and_label_on_image_cv2(img, class_label_map, class_boxes_map):
             text_org = (bb_left, bb_top - 0)
 
             cv2.rectangle(img, (text_org[0] - 5, text_org[1] + base_line - 5),
-                          (text_org[0] + ret_val[0] + 5, text_org[1] - ret_val[1] + 5), unique_color, 2)
+                          (text_org[0] + ret_val[0] + 5, text_org[1] - ret_val[1] + 5), unique_color, 1)
             # this rectangle for fill text rect
             cv2.rectangle(img, (text_org[0] - 5, text_org[1] + base_line - 5),
                           (text_org[0] + ret_val[0] + 5, text_org[1] - ret_val[1] + 5),
-                          unique_color, -1)
-            cv2.putText(img, text_label, text_org, cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
+                          unique_color, 1)
+            cv2.putText(img, text_label, text_org, cv2.FONT_HERSHEY_DUPLEX, 0.6, unique_color, 1)
     return img
 
 
