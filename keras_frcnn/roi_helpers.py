@@ -175,8 +175,9 @@ def non_max_suppression_fast(boxes, overlap_thresh=0.9, max_boxes=300):
 
     pick = []
     area = (x2 - x1) * (y2 - y1)
-    # sorted by boxes last element which is prob
-    indexes = np.argsort([i[-1] for i in boxes])
+    # sorted by boxes fourth element which is prob
+    indexes = np.argsort([i[4] for i in boxes])
+    # print(indexes)
 
     while len(indexes) > 0:
         last = len(indexes) - 1
@@ -195,14 +196,18 @@ def non_max_suppression_fast(boxes, overlap_thresh=0.9, max_boxes=300):
         area_int = ww_int * hh_int
         # find the union
         area_union = area[i] + area[indexes[:last]] - area_int
+        # print(xx1_int, yy1_int, xx2_int, yy2_int, area_int)
+        # print(area_union)
 
         # compute the ratio of overlap
         overlap = area_int / (area_union + 1e-6)
         # print(overlap)
 
+        # for numbered score detection, high overlap rate with itself should also not be included
         # delete all indexes from the index list that have
         indexes = np.delete(indexes, np.concatenate(([last], np.where(overlap > overlap_thresh)[0])))
-
+        # print(indexes)
+        # print(pick)
         if len(pick) >= max_boxes:
             break
     # return only the bounding boxes that were picked using the integer data type
