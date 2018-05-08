@@ -136,7 +136,7 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
             boxes[cls_num].append(
                 [cfg.rpn_stride * x, cfg.rpn_stride * y, cfg.rpn_stride * (x + w), cfg.rpn_stride * (y + h),
                  np.max(p_cls[0, ii, :])])
-    print(boxes)
+    # print(boxes)
     concat_boxes = []
     # add some nms to reduce many boxes
     for cls_num, box in boxes.items():
@@ -155,18 +155,24 @@ def predict_single_image(img_path, model_rpn, model_classifier_only, cfg, class_
         print(class_mapping[cls_num] + ":")
         b[0], b[1], b[2], b[3] = get_real_coordinates(ratio, b[0], b[1], b[2], b[3])
         print('{} prob: {}'.format(b[0: 4], b[4]))
-    print(class_mapping)
+    # print(class_mapping)
     img = draw_boxes_and_label_on_image_cv2(img, class_mapping, boxes)
-    print('Elapsed time = {}'.format(time.time() - st))
+    elapsed_time = time.time() - st
+    print('Elapsed time = {}'.format(elapsed_time))
     # cv2.imshow('image', img)
-    result_path = './results_images/{}.png'.format(os.path.basename(img_path).split('.')[0])
+    if preprocess:
+        result_path = './server_files/{}.png'.format(os.path.basename(img_path).split('.')[0])
+    else:
+        result_path = './results_images/{}.png'.format(os.path.basename(img_path).split('.')[0])
     print('result saved into ', result_path)
     cv2.imwrite(result_path, img)
     cv2.waitKey(30)
     if not preprocess:
         avg_overlap_rate, avg_accurate_rate = compute_accuracy(boxes_nms_crs_cls, class_mapping, re.findall("\d+", img_path)[0])
-        print (avg_overlap_rate, avg_accurate_rate)
-    return boxes_nms_crs_cls, class_mapping
+    else:
+        avg_overlap_rate = 0
+        avg_accurate_rate = 0
+    return boxes_nms_crs_cls, class_mapping, elapsed_time, avg_overlap_rate, avg_accurate_rate
 
 
 def overlap(box1, box2):
@@ -208,10 +214,17 @@ def compute_accuracy(boxes_nums_crs_cls, class_mapping, img_num):
                     rate_total += rate
                     count += 1
                     line1 += "label {} :".format(info[-1]) + "truth: {}".format(info[1:5]) + ", predict: {}".format(box[0:4]) + ", overlap = {}\n".format(rate)
-                elif rate_thres:
-                    line1 += "label truth{} :".format(info[-1]) + "truth: {}".format(info[1:5]) + "label predict{} :".format(class_mapping[int(box[-1])]) + ", predict: {}".format(box[0:4]) + ", overlap = {}\n".format(rate)
+                elif rate > rate_thres:
+                    line1 += "truth label {} :".format(info[-1]) + "truth: {}".format(info[1:5]) + "predict label {} :".format(class_mapping[int(box[-1])]) + ", predict: {}".format(box[0:4]) + ", overlap = {}\n".format(rate)
     avg_overlap_rate = rate_total / (count + 1e-6)
-    avg_accurate_rate = count/num_lines
+    avg_accurate_rate = count / (num_lines + 1e-6)
+    if num_lines == 0:
+        if count == 0:
+            avg_accurate_rate = 1
+            avg_overlap_rate = 1
+        else:
+            avg_accurate_rate = 0
+            avg_overlap_rate = 0
     line2 = "For img{}: ".format(img_num) + "avg_overlap = {}" .format(avg_overlap_rate) + ", avg_accurate = {}\n".format(avg_accurate_rate)
     f_acc.write(line1)
     f_acc.write(line2)
@@ -257,7 +270,8 @@ def predict_from_server(path):
     model_classifier.compile(optimizer='sgd', loss='mse')
 
     print('predict image from {}'.format(path))
-    boxes, class_mapping = predict_single_image(path, model_rpn, model_classifier_only, cfg, class_mapping, True)
+    boxes, class_mapping, elapsed_time, avg_overlap, avg_accurate = predict_single_image(path, model_rpn, model_classifier_only, cfg, class_mapping, True)
+    K.clear_session()
     return boxes, class_mapping
 
 
@@ -305,12 +319,25 @@ def predict(args_):
         preprocess = True
 
     if os.path.isdir(path):
+        total_acc = 0
+        total_overlap = 0
+        total_time = 0
+        count = 0
         for idx, img_name in enumerate(sorted(os.listdir(path))):
             if not img_name.lower().endswith(('.bmp', '.jpeg', '.jpg', '.png', '.tif', '.tiff')):
                 continue
             print(img_name)
-            predict_single_image(os.path.join(path, img_name), model_rpn,
+            boxes, class_mapping, elapsed_time, avg_overlap, avg_accurate = predict_single_image(os.path.join(path, img_name), model_rpn,
                                  model_classifier_only, cfg, class_mapping, preprocess)
+            count += 1
+            total_acc += avg_accurate
+            total_overlap += avg_overlap
+            total_time += elapsed_time
+        avg_acc = total_acc / (count + 1e-6)
+        avg_overlap = total_overlap / (count + 1e-6)
+        avg_elapsed_time = total_time / (count + 1e-6)
+        print("For {} test images, ".format(count) + "the average elapsed time = {}, ".format(avg_elapsed_time) +
+              "the average overlap rate = {}, ".format(avg_overlap) + "the average accuracy = {} ".format(avg_acc))
     elif os.path.isfile(path):
         print('predict image from {}'.format(path))
         predict_single_image(path, model_rpn, model_classifier_only, cfg, class_mapping, preprocess)
